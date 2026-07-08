@@ -2,6 +2,9 @@
 
 # Launchpad USB Bridge
 
+
+![The bottom-left pad lit red via the bridge](images/launchpad-lit.jpg)
+
 A direct USB bridge that lets Max (via Node for Max) talk to an original Novation Launchpad
 (model `NOVLPD01`, USB Vendor ID `0x1235` / Product ID `0x000e`) without Novation's
 discontinued "Automap" software.

@@ -2,6 +2,9 @@
 
 # Launchpad HID/USB Bridge
 
+
+![このブリッジ経由で左下パッドを赤色点灯させた様子](images/launchpad-lit.jpg)
+
 Novationの初代Launchpad(型番 `NOVLPD01`, USB Vendor ID `0x1235` / Product ID `0x000e`)を、
 生産終了した純正ソフト「Automap」なしで、Max単体（Node for Max）から直接認識・操作するための
 ブリッジ。
