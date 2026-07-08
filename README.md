@@ -1,110 +1,172 @@
-# Launchpad HID/USB Bridge
+*[日本語](README.ja.md)*
 
-Novationの初代Launchpad(型番 `NOVLPD01`, USB Vendor ID `0x1235` / Product ID `0x000e`)を、
-生産終了した純正ソフト「Automap」なしで、Max単体（Node for Max）から直接認識・操作するための
-ブリッジ。
+# Launchpad USB Bridge
 
-## 背景・分かったこと
+A direct USB bridge that lets Max (via Node for Max) talk to an original Novation Launchpad
+(model `NOVLPD01`, USB Vendor ID `0x1235` / Product ID `0x000e`) without Novation's
+discontinued "Automap" software.
 
-- この個体はUSBバスには見えるが、macOSのHID/MIDIクラスドライバには一切バインドされない
-  （`bInterfaceClass = 255`、ベンダー定義インターフェース。Low-Speed, 1.5Mb/s）。
-  そのためAudio MIDIの設定にも、Maxの`[hid]`オブジェクトにも、`node-hid`(hidapi)にも出てこない。
-- USBバスレベル(libusb)なら直接掴める。インターフェース0に、8バイト固定長のInterrupt
-  エンドポイントが2つ(IN: `0x81`, OUT: `0x02`)ある。
-- その生パケットの中身は**標準MIDIバイト列そのもの**（ランニングステータス付き）。Automapは
-  複雑な変換をしていたわけではなく、単にこの独自トランスポートをOS標準のMIDIポートとして
-  見せていただけだった。
-- したがって「HIDとして認識させる」のではなく、「libusbで直接エンドポイントを読み書きし、
-  ランニングステータスMIDIとしてパースする」のが正解。
+## Background / what we found
 
-## 動作環境の注意
+- The device shows up on the USB bus, but macOS never binds any HID/MIDI class driver to it
+  (`bInterfaceClass = 255`, vendor-defined interface, Low-Speed 1.5Mb/s). That's why it's
+  invisible to Audio MIDI Setup, Max's `[hid]` object, and `node-hid` (hidapi) alike.
+- It's reachable at the raw USB bus level (libusb). Interface 0 exposes two fixed 8-byte
+  Interrupt endpoints (IN: `0x81`, OUT: `0x02`).
+- The raw packets carried on those endpoints are **plain MIDI bytes** (with running status).
+  Automap wasn't doing anything clever -- it was just exposing this nonstandard transport as
+  a regular OS MIDI port.
+- So the fix isn't "make it look like a HID device" -- it's "read/write the endpoints directly
+  with libusb and parse running-status MIDI".
 
-- Node for Max（`[node.script]`）が内蔵しているNode.jsは、ターミナルの`node`コマンドとは
-  **別バージョン**であることが多い。ネイティブモジュール(`usb`)はMax内蔵Node.jsのABIに
-  合わせてビルド/取得する必要がある。
-  - 確認方法: `node.script node_version_probe.js` を使うと、Maxコンソールに
-    `Node version` / `ABI (NODE_MODULE_VERSION)` / `Platform/arch` が出る。
-  - 一致させる方法: 該当バージョンのNode.js tarballを一時的にダウンロードしPATHに通した
-    状態で`npm install usb`をやり直す（`npm rebuild --target=...`は最新npmでは
-    効かないことがあるため非推奨）。
+## Runtime gotchas
+
+- Node for Max's bundled Node.js (`[node.script]`) is often a **different version** from your
+  Terminal's `node`. Native modules (`usb`) need to be built/fetched matching Max's bundled
+  Node ABI.
+  - To check: use `node.script node_version_probe.js` -- the Max console prints
+    `Node version` / `ABI (NODE_MODULE_VERSION)` / `Platform/arch`.
+  - To match it: temporarily download the matching Node.js tarball, put it first on `PATH`,
+    and reinstall `usb` under it (`npm rebuild --target=...` no longer works reliably on
+    newer npm, so it's not recommended).
     ```
     curl -O https://nodejs.org/dist/vX.Y.Z/node-vX.Y.Z-darwin-arm64.tar.gz
     tar -xzf node-vX.Y.Z-darwin-arm64.tar.gz
     export PATH="$(pwd)/node-vX.Y.Z-darwin-arm64/bin:$PATH"
-    node -v   # 確認
+    node -v   # sanity check
     rm -rf node_modules/usb && npm install usb
     ```
-- `[node.script ...]`オブジェクトは、作成しただけでは動かない。**`script start`メッセージを
-  明示的に送るまでスクリプトは実行されない**（`launchpad_node_hid.maxpat`ではloadbangで
-  自動送信するようにしてある）。
+- A `[node.script ...]` object does nothing just by being created -- **you must explicitly
+  send it a `script start` message** before it runs (`launchpad_node_hid.maxpat` sends this
+  automatically via a loadbang).
 
-## ファイル
+## Using this on another machine
 
-- `launchpad_bridge.js` — 本体。`open`/`close`/`send status data1 [data2]`のメッセージに対応。
-  受信したMIDIは`['midi', status, data1, data2]`としてoutlet。
-- `launchpad_node_hid.maxpat` — 上記を使うMaxパッチ（デコード結果の表示、LEDテストボタン付き）。
-- `usb_probe.js` / `launchpad_raw_read.js` / `node_version_probe.js` — 解析に使った
-  ターミナル単体で動く診断用スクリプト（Maxを介さず`node xxx.js`で直接実行できる）。
+### Intel Mac
 
-## MIDIマッピング表
+You likely don't need this bridge at all. On a tested Intel Mac (Big Sur), the Launchpad
+showed up natively in Audio MIDI Setup -> MIDI Studio with zero extra software (Apple's own
+USB driver stack still has legacy compatibility for this old low-speed device). Check Audio
+MIDI Setup first; if it's there, use it directly from Ableton Live etc. as a normal MIDI
+device.
 
-### グリッド (8×8パッド)
+### A different Apple Silicon Mac
 
-`Note = 16 × row + col`。row0が丸ボタン(自動マップ列)側の最上段、row7が手前(USBコネクタ側)の最下段。
-すべて **Note On/Off (status = 144 / 128, ch.1)**。
+Same procedure is needed, but you don't have to start from scratch -- just reuse this repo.
+
+```
+git clone https://github.com/pb5/launchpad-usb-bridge.git
+cd launchpad-usb-bridge
+npm install
+```
+
+That Mac's Max may bundle a different Node.js version, so follow the "Runtime gotchas"
+section above with `node_version_probe.js` and reinstall `usb` to match if needed.
+
+### Windows
+
+Untested. Windows doesn't auto-assign a generic driver to a "vendor-defined interface" that's
+neither HID nor MIDI, so reaching it via libusb will likely require manually assigning a
+WinUSB driver to the device (Vendor ID `0x1235` / Product ID `0x000e`) using **Zadig**. Plan
+for this separately if you try it.
+
+## If you upgrade Max
+
+Because Node for Max is bundled inside the Max application itself, **upgrading Max can also
+change its bundled Node.js version**. That's exactly what broke this bridge originally --
+Max's bundled Node (v22.18.0 / ABI 127) didn't match the Terminal's Node (v24.18.0).
+
+If `usb` suddenly stops working after a Max update (stuck on "Node script not ready", or a
+`require('usb')` error), do this:
+
+1. Add a `[node.script node_version_probe.js]` object to a patch, send it `script start`,
+   and read the new Node.js version from the Max console.
+2. Temporarily download that Node.js version, put it on `PATH`, and reinstall `usb` in the
+   `launchpad_hid_bridge` folder under it:
+   ```
+   curl -O https://nodejs.org/dist/vX.Y.Z/node-vX.Y.Z-darwin-arm64.tar.gz
+   tar -xzf node-vX.Y.Z-darwin-arm64.tar.gz
+   export PATH="$(pwd)/node-vX.Y.Z-darwin-arm64/bin:$PATH"
+   node -v
+   rm -rf node_modules/usb && npm install usb
+   ```
+3. Restart Max and reopen the patch.
+
+As long as you stay on one Max version, it keeps working indefinitely -- it only breaks when
+Max itself is upgraded.
+
+## Files
+
+- `launchpad_bridge.js` -- the bridge itself. Handles `open` / `close` /
+  `send status data1 [data2]` messages. Incoming MIDI is outlet as
+  `['midi', status, data1, data2]`.
+- `launchpad_node_hid.maxpat` -- the Max patch that uses it (shows decoded MIDI, has LED test
+  buttons).
+- `usb_probe.js` / `launchpad_raw_read.js` / `node_version_probe.js` -- standalone diagnostic
+  scripts used during reverse engineering (run directly with `node xxx.js`, no Max needed).
+
+## MIDI mapping
+
+### Grid (8x8 pads)
+
+`Note = 16 x row + col`. Row 0 is the top row (nearest the round Automap-style buttons), row 7
+is the bottom row (nearest the USB connector). All are **Note On/Off (status = 144 / 128,
+ch. 1)**.
 
 | row\col | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 |---|---|---|---|---|---|---|---|---|
-| 0 (上端) | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+| 0 (top) | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 | 1 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 |
 | 2 | 32 | 33 | 34 | 35 | 36 | 37 | 38 | 39 |
 | 3 | 48 | 49 | 50 | 51 | 52 | 53 | 54 | 55 |
 | 4 | 64 | 65 | 66 | 67 | 68 | 69 | 70 | 71 |
 | 5 | 80 | 81 | 82 | 83 | 84 | 85 | 86 | 87 |
 | 6 | 96 | 97 | 98 | 99 | 100 | 101 | 102 | 103 |
-| 7 (下端) | 112 | 113 | 114 | 115 | 116 | 117 | 118 | 119 |
+| 7 (bottom) | 112 | 113 | 114 | 115 | 116 | 117 | 118 | 119 |
 
-### 右端の丸ボタン (シーン起動、8個)
+### Right-side round buttons (scene launch, x8)
 
-グリッドの9列目にあたる。col=8として同じ式 `16 × row + 8`。こちらも **Note On/Off**。
+The 9th column of the grid. Same formula with col=8: `16 x row + 8`. Also **Note On/Off**.
 
 | row | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 |---|---|---|---|---|---|---|---|---|
 | Note | 8 | 24 | 40 | 56 | 72 | 88 | 104 | 120 |
 
-### 上段の丸ボタン (8個、Automap/Liveボタン)
+### Top round buttons (x8, Automap/Live buttons)
 
-こちらは **Control Change (status = 176, ch.1)**。左から右の順。
+These send **Control Change (status = 176, ch. 1)**, left to right.
 
-| ボタン | Up | Down | Left | Right | Session | User 1 | User 2 | Mixer |
+| Button | Up | Down | Left | Right | Session | User 1 | User 2 | Mixer |
 |---|---|---|---|---|---|---|---|---|
-| CC番号 | 104 | 105 | 106 | 107 | 108 | 109 | 110 | 111 |
+| CC # | 104 | 105 | 106 | 107 | 108 | 109 | 110 | 111 |
 
-Ableton Live純正のコントロールサーフェススクリプトが有効な環境では、これらは
-Vol/Pan/SndA/SndB/Stop/TrackOn/Solo/Armのように機能が上書き表示されることがあるが、
-生のMIDI番号(CC104-111)自体は固定。
+Under Ableton Live's native control surface script these may display as
+Vol/Pan/SndA/SndB/Stop/TrackOn/Solo/Arm, but the raw MIDI numbers (CC 104-111) are fixed
+regardless.
 
-### ベロシティ/値 = LEDの色 (共通)
+### Velocity/value = LED color (shared)
 
-グリッド・シーンボタンはNote On、上段ボタンはCCで、どちらもvelocity/value部分で色を指定する。
+Grid and scene buttons use Note On, top-row buttons use CC -- both encode color in the
+velocity/value byte.
 
-| 値 | 色 |
+| Value | Color |
 |---|---|
-| 12 | 消灯 |
-| 15 | 赤(フル) |
-| 60 | 緑(フル) |
-| 63 | 黄/アンバー(フル) |
+| 12 | Off |
+| 15 | Red (full) |
+| 60 | Green (full) |
+| 63 | Amber/yellow (full) |
 
-赤・緑それぞれ2bitの輝度(0-3)を持つので、上記4つ以外の中間の明るさも指定可能
-（値 = 16×green(0-3) + 8(copy) + 4(clear) + red(0-3)）。
+Red and green each have 2 bits of brightness (0-3), so intermediate brightness levels beyond
+these four are also possible (value = 16 x green(0-3) + 8(copy) + 4(clear) + red(0-3)).
 
-## 使い方
+## Usage
 
-`launchpad_node_hid.maxpat`を参照。要点だけ:
+See `launchpad_node_hid.maxpat`. In short:
 
-1. 初回のみ: `npm install`（Max内蔵Node.jsとのABIが合わない場合は上記の手順で`usb`を入れ直す）
-2. パッチを開く → loadbangが`script start`を自動送信
-3. `open`メッセージをクリック
-4. Launchpadのボタンを押すと`route midi`以下にデコード結果が出る
-5. `send <status> <data1> <data2>`メッセージでLEDを制御できる
-   (例: `send 144 0 15` で左上パッドを赤点灯)
+1. First time only: `npm install` (reinstall `usb` per the steps above if Max's bundled Node
+   ABI doesn't match)
+2. Open the patch -> a loadbang auto-sends `script start`
+3. Click the `open` message
+4. Press buttons on the Launchpad -- decoded output appears below `route midi`
+5. Use `send <status> <data1> <data2>` messages to control LEDs (e.g. `send 144 0 15` lights
+   the top-left pad red)
