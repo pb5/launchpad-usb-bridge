@@ -1,0 +1,4 @@
+.DS_Store
+node_modules/
+node-v*-darwin-*/
+node-v*-darwin-*.tar.gz
