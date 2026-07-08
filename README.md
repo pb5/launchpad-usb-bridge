@@ -164,12 +164,31 @@ these four are also possible (value = 16 x green(0-3) + 8(copy) + 4(clear) + red
 
 ## Usage
 
-See `launchpad_node_hid.maxpat`. In short:
+See `launchpad_node_hid.maxpat`.
 
-1. First time only: `npm install` (reinstall `usb` per the steps above if Max's bundled Node
-   ABI doesn't match)
-2. Open the patch -> a loadbang auto-sends `script start`
-3. Click the `open` message
-4. Press buttons on the Launchpad -- decoded output appears below `route midi`
-5. Use `send <status> <data1> <data2>` messages to control LEDs (e.g. `send 144 0 15` lights
+### First-time setup (required)
+
+The native module (`usb`) is an environment-specific compiled binary -- git only holds the
+source. **Anyone who clones this repo needs to do the following build step once, on their own
+machine.** As noted in "Runtime gotchas", Max's bundled Node.js almost never matches your
+Terminal's Node.js, so a plain `npm install` alone generally will not work.
+
+1. `npm install`
+2. Check Max's bundled Node.js version: add a `[node.script node_version_probe.js]` object to
+   a patch, send it `script start`, and read the version from the Max console.
+3. Reinstall `usb` for that Node.js version:
+   ```
+   curl -O https://nodejs.org/dist/vX.Y.Z/node-vX.Y.Z-darwin-arm64.tar.gz
+   tar -xzf node-vX.Y.Z-darwin-arm64.tar.gz
+   export PATH="$(pwd)/node-vX.Y.Z-darwin-arm64/bin:$PATH"
+   node -v   # sanity check
+   rm -rf node_modules/usb && npm install usb
+   ```
+
+### Everyday usage
+
+1. Open the patch -> a loadbang auto-sends `script start`
+2. Click the `open` message
+3. Press buttons on the Launchpad -- decoded output appears below `route midi`
+4. Use `send <status> <data1> <data2>` messages to control LEDs (e.g. `send 144 0 15` lights
    the top-left pad red)
